@@ -15,20 +15,20 @@ from tensorflow_transform.beam import impl as beam_impl
 from tensorflow_transform.beam.tft_beam_io import transform_fn_io
 from tensorflow_transform.tf_metadata import dataset_metadata
 
-from trainer.config import BUCKET, TRAIN_INPUT_DATA, TRAIN_OUTPUT_DATA, TFRECORD_DIR, MODEL_DIR, \
-    input_schema, output_schema, example_schema
+from trainer.config import PROJECT_ID, BUCKET, TRAIN_INPUT_DATA, TRAIN_OUTPUT_DATA, TFRECORD_DIR, MODEL_DIR, \
+    INPUT_SCHEMA, OUTPUT_SCHEMA, EXAMPLE_SCHEMA
 
 delimiter = ';'
 converter_input = coders.CsvCoder(
     ['BatchId', 'ButterMass', 'ButterTemperature', 'SugarMass', 'SugarHumidity', 'FlourMass', 'FlourHumidity',
      'HeatingTime', 'MixingSpeed', 'MixingTime'],
-    input_schema,
+    INPUT_SCHEMA,
     delimiter=delimiter)
 converter_output = coders.CsvCoder(
     ['BatchId', 'TotalVolume', 'Density', 'Temperature', 'Humidity', 'Energy', 'Problems'],
-    output_schema,
+    OUTPUT_SCHEMA,
     delimiter=delimiter)
-input_metadata = dataset_metadata.DatasetMetadata(schema=example_schema)
+input_metadata = dataset_metadata.DatasetMetadata(schema=EXAMPLE_SCHEMA)
 
 
 def extract_batchkey(record):
@@ -65,7 +65,7 @@ def preprocessing_fn(inputs):
     """
     outputs = {}
     # Encode categorical column:
-    outputs['MixingSpeed'] = tft.string_to_int(inputs['MixingSpeed'])
+    outputs['MixingSpeed'] = tft.compute_and_apply_vocabulary(inputs['MixingSpeed'])
     outputs['ButterMass'] = inputs['ButterMass']
     # Calculate Derived Features:
     outputs['TotalMass'] = inputs['ButterMass'] + inputs['SugarMass'] + inputs['FlourMass']
@@ -112,11 +112,10 @@ def parse_arguments(argv):
     return args
 
 
-def get_cloud_pipeline_options(project, output_dir):
+def get_cloud_pipeline_options():
     """Get apache beam pipeline options to run with Dataflow on the cloud
     Args:
         project (str): GCP project to which job will be submitted
-        output_dir (str): GCS directory to which output will be written
     Returns:
         beam.pipeline.PipelineOptions
     """
@@ -128,7 +127,7 @@ def get_cloud_pipeline_options(project, output_dir):
             datetime.now().strftime('%Y%m%d%H%M%S'))),
         'staging_location': os.path.join(BUCKET, 'staging'),
         'temp_location': os.path.join(BUCKET, 'tmp'),
-        'project': project,
+        'project': PROJECT_ID,
         'region': 'europe-west1',
         'zone': 'europe-west1-d',
         'autoscaling_algorithm': 'THROUGHPUT_BASED',
@@ -147,8 +146,7 @@ def main(argv=None):
     args = parse_arguments(sys.argv if argv is None else argv)
 
     if args.cloud:
-        pipeline_options = get_cloud_pipeline_options(args.project_id,
-                                                      args.output_dir)
+        pipeline_options = get_cloud_pipeline_options()
     else:
         pipeline_options = None
 
@@ -156,29 +154,30 @@ def main(argv=None):
     with beam_impl.Context(temp_dir=tempfile.mkdtemp()):
         # read data and join by key
         raw_data_input = (
-            p
-            | 'ReadInputData' >> beam.io.ReadFromText(TRAIN_INPUT_DATA, skip_header_lines=1)
-            | 'ParseInputCSV' >> beam.Map(converter_input.decode)
-            | 'ExtractBatchKeyIn' >> beam.Map(extract_batchkey)
+                p
+                | 'ReadInputData' >> beam.io.ReadFromText(TRAIN_INPUT_DATA, skip_header_lines=1)
+                | 'ParseInputCSV' >> beam.Map(converter_input.decode)
+                | 'ExtractBatchKeyIn' >> beam.Map(extract_batchkey)
         )
 
         raw_data_output = (
-            p
-            | 'ReadOutputData' >> beam.io.ReadFromText(TRAIN_OUTPUT_DATA, skip_header_lines=1)
-            | 'ParseOutputCSV' >> beam.Map(converter_output.decode)
-            | 'ExtractBatchKeyOut' >> beam.Map(extract_batchkey)
+                p
+                | 'ReadOutputData' >> beam.io.ReadFromText(TRAIN_OUTPUT_DATA, skip_header_lines=1)
+                | 'ParseOutputCSV' >> beam.Map(converter_output.decode)
+                | 'ExtractBatchKeyOut' >> beam.Map(extract_batchkey)
         )
 
         raw_data = (
-            (raw_data_input, raw_data_output)
-            | 'JoinData' >> beam.CoGroupByKey()
-            | 'RemoveKeys' >> beam.FlatMap(remove_keys)
+                (raw_data_input, raw_data_output)
+                | 'JoinData' >> beam.CoGroupByKey()
+                | 'RemoveKeys' >> beam.FlatMap(remove_keys)
         )
 
         # analyse and transform dataset
         raw_dataset = (raw_data, input_metadata)
-        transform_fn = raw_dataset | beam_impl.AnalyzeDataset(preprocessing_fn)
-        transformed_dataset = (raw_dataset, transform_fn) | beam_impl.TransformDataset()
+        transformed_dataset, transform_fn = (raw_dataset
+                                             | 'AnalyzeAndTransform' >> beam_impl.AnalyzeAndTransformDataset(
+                    preprocessing_fn))
         transformed_data, transformed_metadata = transformed_dataset
 
         # save data and serialize TransformFn
@@ -187,7 +186,7 @@ def main(argv=None):
         _ = (transformed_data
              | 'EncodeData' >> beam.Map(transformed_data_coder.encode)
              | 'WriteData' >> tfrecordio.WriteToTFRecord(
-            os.path.join(TFRECORD_DIR, 'records')))
+                    os.path.join(TFRECORD_DIR, 'records')))
         _ = (transform_fn
              | "WriteTransformFn" >>
              transform_fn_io.WriteTransformFn(MODEL_DIR))

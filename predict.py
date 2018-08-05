@@ -1,3 +1,7 @@
+"""
+Preprocess module that defines the transform function and applies it to the data
+"""
+
 from googleapiclient import discovery
 
 from trainer.config import PROJECT_ID

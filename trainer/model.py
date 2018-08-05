@@ -1,4 +1,7 @@
 #!/usr/bin/python
+"""
+Implementation of the Tensorflow model
+"""
 import tensorflow as tf
 
 
