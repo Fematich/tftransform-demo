@@ -2,7 +2,9 @@ tf.Transform example for building digital twin
 ====================
 
 This repository is designed to quickly get you started with Machine Learning projects on Google Cloud Platform using tf.Transform.
-This code repository is linked to [this blogpost]([https://www.google.com).
+This code repository is linked to [this Google Cloud blogpost](https://cloud.google.com/blog/products/ai-machine-learning/pre-processing-tensorflow-pipelines-tftransform-google-cloud) 
+
+For more boilerplate examples, check: https://github.com/Fematich/mlengine-boilerplate
 
 ### Functionalities
 - preprocessing pipeline using tf.Transform (with Apache Beam) that runs on Cloud Dataflow or locally
